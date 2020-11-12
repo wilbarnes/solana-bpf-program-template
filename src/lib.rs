@@ -26,7 +26,9 @@ fn process_instruction(
     ));
 
     let account_info_iter = &mut accounts.iter();
+    // program_token_address
     let program_token_info = next_account_info(account_info_iter)?;
+
     let (program_token_address, program_token_bump_seed) =
         Pubkey::find_program_address(&[br"program-token"], program_id);
 
@@ -39,11 +41,16 @@ fn process_instruction(
 
     match instruction_data.get(0) {
         Some(0) => {
-            info!("Create program token account...");
+            info!("Create account...");
+            // payer.pubkey()
             let funder_info = next_account_info(account_info_iter)?;
+            // spl_token::native_mint::id()
             let mint_info = next_account_info(account_info_iter)?;
+            // solana_program::system_program::id()
             let system_program_info = next_account_info(account_info_iter)?;
+            // spl_token::id()
             let spl_token_program_info = next_account_info(account_info_iter)?;
+            // sysvar::rent::id()
             let rent_sysvar_info = next_account_info(account_info_iter)?;
 
             let rent = &Rent::from_account_info(rent_sysvar_info)?;
@@ -103,6 +110,30 @@ fn process_instruction(
                 &[&program_token_signer_seeds],
             )
         }
+        Some(2) => {
+            info!("Send the token to another associated token...");
+
+            let funder_info = next_account_info(account_info_iter)?;
+            let spl_token_program_info = next_account_info(account_info_iter)?;
+
+            invoke_signed(
+                &spl_token::instruction::transfer(
+                    &spl_token::id(),
+                    funder_info.key,
+                    &Pubkey::new_unique(),
+                    funder_info.key,
+                    &[],
+                    1
+                )
+                .expect("transfer"),
+                &[
+                    funder_info.clone(),
+                    Pubkey::new_unique,
+                    funder_info.key,
+                ],
+                &[&program_token_signer_seeds],
+            )
+        }
         _ => {
             info!("Error: Unsupported instruction");
             Err(ProgramError::InvalidInstructionData)
@@ -123,7 +154,7 @@ mod test {
     use solana_program_test::*;
     use solana_sdk::{signature::Signer, transaction::Transaction};
 
-    fn program_test(program_id: Pubkey) -> ProgramTest {
+    fn program_test(program_id: Pubkey, spl_one: Pubkey, spl_two: Pubkey) -> ProgramTest {
         let mut pc = ProgramTest::new(
             "bpf_program_template",
             program_id,
@@ -137,13 +168,28 @@ mod test {
             processor!(spl_token::processor::Processor::process),
         );
 
+        // Add SPL Token program
+        pc.add_program(
+            "spl_token2",
+            spl_two,
+            processor!(spl_token::processor::Processor::process),
+        );
+
         pc
     }
 
     #[tokio::test]
     async fn test_create_then_close() {
-        let program_id = Pubkey::new_unique();
-        let (mut banks_client, payer, recent_blockhash) = program_test(program_id).start().await;
+        let program_id  = Pubkey::new_unique();
+        
+        let spl_one = Pubkey::new_unique();
+        let spl_two = Pubkey::new_unique();
+
+        let (mut banks_client, payer, recent_blockhash) = program_test(
+            program_id,
+            spl_one,
+            spl_two
+        ).start().await;
 
         let program_token_address =
             Pubkey::find_program_address(&[br"program-token"], &program_id).0;
@@ -173,6 +219,7 @@ mod test {
             .await
             .expect("success")
             .expect("some account");
+
         let program_token_account =
             spl_token::state::Account::unpack_from_slice(&program_token_account.data)
                 .expect("unpack success");
